@@ -107,13 +107,21 @@ Nix must already be installed.
 
 ## Development
 
+The dev shell carries the tools CI uses. Enter it with `nix develop`, or open
+the repository in its devcontainer, which installs Nix.
+
 `tests/test.sh` runs the script against throwaway copies of
-`tests/fixture`, each a git repository with a local remote, and needs only Nix:
+`tests/fixture`, each a git repository with a local remote:
 
 ```sh
-tests/test.sh                            # every test
-tests/test.sh test_updates_a_stale_hash  # one test
+nix develop --command tests/test.sh                            # every test
+nix develop --command tests/test.sh test_updates_a_stale_hash  # one test
+nix develop --command shellcheck nix-update-hash.sh tests/test.sh
+nix develop --command actionlint
 ```
+
+Releases are cut by release-please from Conventional Commits. Each release
+also moves the major version tag, such as `v1`, that callers pin.
 
 ## License
 
