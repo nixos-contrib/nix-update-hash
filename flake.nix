@@ -23,6 +23,7 @@
           packages = with pkgs; [
             bash
             git
+            jq
             perl
             shellcheck
             actionlint

@@ -20,6 +20,13 @@ This action does that on the pull request instead.
    the `got` hash over it, in the same encoding (SRI, nix32, base16 or base64).
 3. Builds again, in case a fixed-output derivation was only reachable once
    another one built, until the build succeeds.
+
+   If the old hash's output is already in the store, because it was built
+   before the bump or fetched from a binary cache, Nix reuses it. The build
+   then fails later, for example with `go: inconsistent vendoring`, instead of
+   on the hash. So when a build fails with no hash mismatch, the action
+   rebuilds the fixed-output derivations whose hashes are written in the
+   repository, using `--rebuild`, which brings the mismatch back.
 4. Commits the updated files and pushes them to the checked-out branch.
 
 The hash is found by value, not by attribute name, so it needs no
@@ -96,7 +103,8 @@ so a pull request whose hash could not be repaired waits instead of merging.
 | `author-name` | `github-actions[bot]` | Author and committer name of the commit. |
 | `author-email` | `41898283+github-actions[bot]@users.noreply.github.com` | Author and committer email of the commit. |
 
-Nix must already be installed.
+Nix must already be installed. The action also uses `jq`, which GitHub-hosted
+runners already have.
 
 ## Outputs
 

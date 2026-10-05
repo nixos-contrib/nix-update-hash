@@ -9,7 +9,15 @@
 # by value rather than by attribute name, so no per-repository configuration
 # is needed. Anything else that breaks the build fails the run.
 #
-# Kept to bash 3.2, the /bin/bash macOS runners ship.
+# A stale hash whose old output is already in the store -- built before the
+# bump, or substituted from a binary cache -- does not fail on the hash:
+# Nix reuses that output, and the build fails further on instead, as with
+# "go: inconsistent vendoring". So when a build fails without a hash
+# mismatch, the fixed-output derivations whose hashes are written here are
+# rebuilt with --rebuild, which brings the mismatch back.
+#
+# Kept to bash 3.2, the /bin/bash macOS runners ship. Needs jq, which
+# GitHub-hosted runners carry.
 #
 # Environment:
 #   INSTALLABLES    Space- or newline-separated flake installables to build.
@@ -53,6 +61,40 @@ hash_mismatches() {
 hash_encode() {
   local hash=$1 encoding=$2
   nix_command hash convert --hash-algo "${hash%%-*}" --to "$encoding" "$hash"
+}
+
+# Prints the SRI hashes written in the .nix files, one per line.
+written_hashes() {
+  { grep -rhoE --include='*.nix' 'sha(256|512)-[A-Za-z0-9+/]+={0,2}' . || true; } | sort -u
+}
+
+# Rebuilds the fixed-output derivations in the installables' closure whose
+# hash is written in a .nix file here, printing the build log. Matches both
+# the SRI hashes newer Nix reports and the base16 ones older Nix does.
+rebuild_written_fixed_outputs() {
+  local hashes="" hash store derivations
+
+  for hash in $(written_hashes); do
+    hashes="$hashes $hash $(hash_encode "$hash" base16 2>/dev/null || true)"
+  done
+  [ -n "$hashes" ] || return 0
+
+  store=$(nix_command eval --raw --expr builtins.storeDir 2>/dev/null || echo /nix/store)
+  # Word-split on purpose: the list holds hashes, which have no spaces.
+  # shellcheck disable=SC2086
+  derivations=$(
+    nix_command derivation show --recursive "${installables[@]}" 2>/dev/null |
+      jq -r --arg store "$store" --args '
+        (.derivations // .) | to_entries[]
+        | select(.value.outputs.out.hash as $hash | $hash != null and ($ARGS.positional | index($hash)))
+        | (if (.key | startswith("/")) then .key else "\($store)/\(.key)" end) + "^out"
+      ' $hashes
+  ) || return 0
+  [ -n "$derivations" ] || return 0
+
+  # Word-split on purpose: store paths have no spaces.
+  # shellcheck disable=SC2086
+  nix_command build --no-link --keep-going --rebuild $derivations 2>&1 || true
 }
 
 # Counts the occurrences of a literal string across the .nix files.
@@ -114,6 +156,13 @@ while :; do
   echo "::endgroup::"
 
   mismatches=$(printf '%s\n' "$log" | hash_mismatches)
+  if [ -z "$mismatches" ]; then
+    echo "::group::nix build --rebuild of the fixed-output derivations written here"
+    log=$(rebuild_written_fixed_outputs)
+    printf '%s\n' "$log"
+    echo "::endgroup::"
+    mismatches=$(printf '%s\n' "$log" | hash_mismatches)
+  fi
   if [ -z "$mismatches" ]; then
     echo "::error::The build failed for a reason other than a stale hash."
     exit 1
