@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Run ShellCheck
+        run: nix develop --command shellcheck nix-update-hash.sh tests/test.sh
+
+      - name: Run actionlint
+        run: nix develop --command actionlint
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Run Tests
+        run: nix develop --command tests/test.sh
+
+  # Runs the action itself, as a caller would -- with the runner's own tools
+  # rather than the dev shell -- against a repository whose hash is stale and
+  # which pushes to a local remote.
+  action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Prepare a repository with a stale hash
+        run: |
+          repository="$RUNNER_TEMP/repository"
+          git init --quiet --bare "$repository.git"
+          git init --quiet "$repository"
+          cp tests/fixture/flake.nix "$repository/flake.nix"
+          cd "$repository"
+          git checkout --quiet -b main
+          OLD=sha256-AWZuwGBGbBS5+gbGE/usRJFj8qIBdVj+FlJiCat4xrA= \
+          NEW=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            perl -pi -e 's/\Q$ENV{OLD}\E/$ENV{NEW}/g' flake.nix
+          git add flake.nix
+          git -c user.name=test -c user.email=test@example.com commit --quiet --message stale
+          git remote add origin "$repository.git"
+          git push --quiet --set-upstream origin main
+
+      - name: Update dependency hash
+        id: update
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/repository
+
+      - name: Check the pushed fix
+        env:
+          UPDATED: ${{ steps.update.outputs.updated }}
+          FILES: ${{ steps.update.outputs.files }}
+        run: |
+          test "$UPDATED" = true
+          test "$FILES" = flake.nix
+          grep -qF sha256-AWZuwGBGbBS5+gbGE/usRJFj8qIBdVj+FlJiCat4xrA= "$RUNNER_TEMP/repository/flake.nix"
+          test "$(git --git-dir="$RUNNER_TEMP/repository.git" log -1 --format=%s main)" = "chore(nix): update dependency hash"
+
+  release:
+    needs: [lint, test, action]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create Release PR
+        id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          manifest-file: .github/config/release-please-manifest.json
+          config-file: .github/config/release-please-config.json
+          target-branch: main
+
+      # Callers pin the major version, e.g. @v1, so it follows every release.
+      - name: Move the major version tag
+        if: steps.release.outputs.release_created
+        env:
+          TAG: ${{ steps.release.outputs.tag_name }}
+          MAJOR: v${{ steps.release.outputs.major }}
+        run: |
+          git fetch --tags --quiet
+          git tag --force "$MAJOR" "$TAG"
+          git push --force origin "refs/tags/$MAJOR"
