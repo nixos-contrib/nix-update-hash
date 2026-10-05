@@ -1,8 +1,8 @@
 {
   description = "Fixed-output derivations for the nix-update-hash tests";
 
-  # No inputs: each package is a bare fixed-output derivation that writes its
-  # own name, so a build needs neither nixpkgs nor the network.
+  # No inputs: each package is a bare derivation, so a build needs neither
+  # nixpkgs nor the network.
   outputs =
     { self }:
     let
@@ -13,28 +13,49 @@
         "aarch64-darwin"
       ];
 
-      fixed =
-        system: name: hash:
-        derivation {
-          inherit name system;
-          builder = "/bin/sh";
-          args = [
-            "-c"
-            "echo ${name} > $out"
-          ];
-          outputHashMode = "flat";
-          outputHashAlgo = "sha256";
-          outputHash = hash;
+      packagesFor =
+        system:
+        let
+          # A fixed-output derivation writing its content, as a fetcher
+          # writes the dependencies it downloads.
+          fixed =
+            name: content: hash:
+            derivation {
+              inherit name system content;
+              builder = "/bin/sh";
+              args = [
+                "-c"
+                "echo $content > $out"
+              ];
+              outputHashMode = "flat";
+              outputHashAlgo = "sha256";
+              outputHash = hash;
+            };
+
+          defaultContent = "default";
+        in
+        rec {
+          default = fixed "default" defaultContent "sha256-AWZuwGBGbBS5+gbGE/usRJFj8qIBdVj+FlJiCat4xrA=";
+          second = fixed "second" "second" "sha256-SAwjNrQQ8a1fi/GyiURJAlWAS2U1DFJ3h+dOvdUR46Q=";
+
+          # Built from default, and fails unless it holds defaultContent, as go
+          # build fails on vendored modules that are not the ones go.mod names.
+          consumer = derivation {
+            name = "consumer";
+            inherit system;
+            builder = "/bin/sh";
+            args = [
+              "-c"
+              "read -r content < ${default}; [ \"$content\" = ${defaultContent} ] && echo ok > $out"
+            ];
+          };
         };
     in
     {
       packages = builtins.listToAttrs (
         map (system: {
           name = system;
-          value = {
-            default = fixed system "default" "sha256-AWZuwGBGbBS5+gbGE/usRJFj8qIBdVj+FlJiCat4xrA=";
-            second = fixed system "second" "sha256-SAwjNrQQ8a1fi/GyiURJAlWAS2U1DFJ3h+dOvdUR46Q=";
-          };
+          value = packagesFor system;
         }) systems
       );
     };

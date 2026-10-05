@@ -94,6 +94,21 @@ test_updates_a_stale_hash() {
   expect "a clean working tree" test -z "$(git status --porcelain)"
 }
 
+test_updates_a_cached_stale_hash() {
+  local current
+  current=$(printf 'bumped\n' | nix hash file --sri /dev/stdin)
+  setup "$name"
+  # Cache the output default's hash names, then change what it holds, as a
+  # bump changes go.sum: Nix reuses the cached output, and only the consumer
+  # built from it fails.
+  nix build --no-link .#default 2>/dev/null
+  change 'defaultContent = "default";' 'defaultContent = "bumped";'
+  run INSTALLABLES=.#consumer
+  expect "success" test "$status" -eq 0
+  expect "the bumped hash" contains flake.nix "$current"
+  expect "the fix pushed" test "$(remote_subject)" = "chore(nix): update dependency hash"
+}
+
 test_leaves_current_hashes_alone() {
   setup "$name"
   run INSTALLABLES=.#default
