@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Run ShellCheck
+        run: shellcheck nix-update-hash.sh tests/test.sh
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Run Tests
+        run: tests/test.sh
+
+  # Runs the action itself, as a caller would, against a repository whose
+  # hash is stale and which pushes to a local remote.
+  action:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v23
+
+      - name: Prepare a repository with a stale hash
+        run: |
+          repository="$RUNNER_TEMP/repository"
+          git init --quiet --bare "$repository.git"
+          git init --quiet "$repository"
+          cp tests/fixture/flake.nix "$repository/flake.nix"
+          cd "$repository"
+          git checkout --quiet -b main
+          OLD=sha256-AWZuwGBGbBS5+gbGE/usRJFj8qIBdVj+FlJiCat4xrA= \
+          NEW=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
+            perl -pi -e 's/\Q$ENV{OLD}\E/$ENV{NEW}/g' flake.nix
+          git add flake.nix
+          git -c user.name=test -c user.email=test@example.com commit --quiet --message stale
+          git remote add origin "$repository.git"
+          git push --quiet --set-upstream origin main
+
+      - name: Update dependency hash
+        id: update
+        uses: ./
+        with:
+          working-directory: ${{ runner.temp }}/repository
+
+      - name: Check the pushed fix
+        env:
+          UPDATED: ${{ steps.update.outputs.updated }}
+          FILES: ${{ steps.update.outputs.files }}
+        run: |
+          test "$UPDATED" = true
+          test "$FILES" = flake.nix
+          grep -qF sha256-AWZuwGBGbBS5+gbGE/usRJFj8qIBdVj+FlJiCat4xrA= "$RUNNER_TEMP/repository/flake.nix"
+          test "$(git --git-dir="$RUNNER_TEMP/repository.git" log -1 --format=%s main)" = "chore(nix): update dependency hash"

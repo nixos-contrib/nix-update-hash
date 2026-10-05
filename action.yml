@@ -1,0 +1,56 @@
+name: Update Nix Dependency Hash
+description: >-
+  Repair the fixed-output hashes (vendorHash, cargoHash, npmDepsHash, ...) a
+  dependency bump left stale, and push the fix.
+author: nixos-contrib
+
+branding:
+  icon: refresh-cw
+  color: blue
+
+inputs:
+  installables:
+    description: Space- or newline-separated flake installables to build.
+    default: .#default
+  working-directory:
+    description: >-
+      Directory to build from. Every .nix file under it is searched for the
+      stale hashes.
+    default: .
+  commit:
+    description: >-
+      Commit the updated files and push them to the checked-out branch. Set to
+      "false" to only update the working tree.
+    default: "true"
+  commit-message:
+    description: Message of the commit.
+    default: "chore(nix): update dependency hash"
+  author-name:
+    description: Author and committer name of the commit.
+    default: github-actions[bot]
+  author-email:
+    description: Author and committer email of the commit.
+    default: 41898283+github-actions[bot]@users.noreply.github.com
+
+outputs:
+  updated:
+    description: '"true" when at least one hash was updated, otherwise "false".'
+    value: ${{ steps.update.outputs.updated }}
+  files:
+    description: Space-separated paths of the updated files, relative to working-directory.
+    value: ${{ steps.update.outputs.files }}
+
+runs:
+  using: composite
+  steps:
+    - name: Update dependency hashes
+      id: update
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INSTALLABLES: ${{ inputs.installables }}
+        COMMIT: ${{ inputs.commit }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
+        AUTHOR_NAME: ${{ inputs.author-name }}
+        AUTHOR_EMAIL: ${{ inputs.author-email }}
+      run: "$GITHUB_ACTION_PATH/nix-update-hash.sh"
