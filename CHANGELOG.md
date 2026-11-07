@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.0](https://github.com/nixos-contrib/nix-update/compare/v1.0.0...v1.0.0) (2026-11-07)
+
+
+### Bug Fixes
+
+* **ci:** ignore the stale actionlint inputs in merge.yml too ([ff2ee59](https://github.com/nixos-contrib/nix-update/commit/ff2ee599c8850e317275b378cca6137f9b33f0eb))
+* **ci:** merge with the App token so main gets its CI run ([#11](https://github.com/nixos-contrib/nix-update/issues/11)) ([2cf020e](https://github.com/nixos-contrib/nix-update/commit/2cf020e3dcd54df7fa161b2272f5da82e63681ae))
+
 ## 1.0.0 (2026-11-07)
 
 
